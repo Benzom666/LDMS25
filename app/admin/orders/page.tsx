@@ -18,6 +18,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Progress } from "@/components/ui/progress"
 import { OrderTemplateGenerator } from "@/components/order-template-generator"
 import DeliveryMap from "@/components/delivery-map"
+import { LabelGeneratorComponent } from "@/components/label-generator-component"
 import {
   Package,
   Clock,
@@ -88,7 +89,7 @@ export default function AdminOrdersPage() {
       fetchOrders()
       fetchDrivers()
     }
-  }, [profile])
+  }, [profile, statusFilter])
 
   const fetchDrivers = async () => {
     if (!profile) return
@@ -116,16 +117,32 @@ export default function AdminOrdersPage() {
   const fetchOrders = async () => {
     if (!profile) return
 
-    setLoading(true)
     try {
-      // First fetch orders
-      const { data: ordersData, error: ordersError } = await supabase
+      setLoading(true)
+      let query = supabase
         .from("orders")
-        .select("*")
+        .select(`
+          id,
+          order_number,
+          customer_name,
+          delivery_address,
+          status,
+          priority,
+          created_at,
+          driver_id
+        `)
         .eq("created_by", profile.user_id)
         .order("created_at", { ascending: false })
 
-      if (ordersError) throw ordersError
+      if (statusFilter !== "all") {
+        query = query.eq("status", statusFilter)
+      }
+
+      const { data: ordersData, error: ordersError } = await query
+
+      if (ordersError) {
+        throw ordersError
+      }
 
       // Then fetch driver information separately
       const { data: driversData, error: driversError } = await supabase
@@ -452,6 +469,29 @@ export default function AdminOrdersPage() {
     )
   }
 
+  const getStatusColor = (status: string) => {
+    const statusColors: Record<string, string> = {
+      pending: "bg-yellow-100 text-yellow-800 border-yellow-200",
+      assigned: "bg-blue-100 text-blue-800 border-blue-200",
+      picked_up: "bg-indigo-100 text-indigo-800 border-indigo-200",
+      in_transit: "bg-purple-100 text-purple-800 border-purple-200",
+      delivered: "bg-green-100 text-green-800 border-green-200",
+      failed: "bg-red-100 text-red-800 border-red-200",
+      cancelled: "bg-gray-100 text-gray-800 border-gray-200",
+    }
+    return statusColors[status] || "bg-gray-100 text-gray-800 border-gray-200"
+  }
+
+  const getPriorityColor = (priority: string) => {
+    const priorityColors: Record<string, string> = {
+      low: "bg-green-100 text-green-800 border-green-200",
+      medium: "bg-blue-100 text-blue-800 border-blue-200",
+      high: "bg-orange-100 text-orange-800 border-orange-200",
+      urgent: "bg-red-100 text-red-800 border-red-200",
+    }
+    return priorityColors[priority] || "bg-gray-100 text-gray-800 border-gray-200"
+  }
+
   const filteredOrders = orders.filter((order) => {
     const matchesSearch =
       order.order_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -724,6 +764,10 @@ export default function AdminOrdersPage() {
               <AlertTriangle className="h-4 w-4" />
               Failed ({getTabCount("failed")})
             </TabsTrigger>
+            <TabsTrigger value="labels" className="flex items-center gap-2">
+              <FileText className="h-4 w-4" />
+              Labels
+            </TabsTrigger>
           </TabsList>
 
           <TabsContent value="all" className="mt-6">
@@ -771,6 +815,17 @@ export default function AdminOrdersPage() {
               onSelectOrder={handleSelectOrder}
               allSelected={allSelected}
               someSelected={someSelected}
+            />
+          </TabsContent>
+          <TabsContent value="labels" className="mt-6">
+            <LabelGeneratorComponent
+              orders={getOrdersByTab("all")}
+              onLabelGenerated={(orderId, labelUrl) => {
+                toast({
+                  title: "Label Generated",
+                  description: `Label generated for order ${orderId}`,
+                })
+              }}
             />
           </TabsContent>
         </Tabs>
