@@ -41,6 +41,7 @@
     "@supabase/ssr": "latest",
     "@supabase/supabase-js": "latest",
     "@testing-library/jest-dom": "latest",
+    "@zxing/library": "latest",
     "autoprefixer": "^10.4.20",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
