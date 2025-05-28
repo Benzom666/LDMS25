@@ -4,6 +4,7 @@
  */
 
 import { jsPDF } from "jspdf"
+import JsBarcode from "jsbarcode"
 
 export interface LabelData {
   orderNumber: string
@@ -202,46 +203,48 @@ export class LabelGenerator {
 
   /**
    * Helper method to generate a barcode as a data URL
+   * Uses JsBarcode library to generate a proper scannable barcode
    */
   private static async generateBarcodeDataUrl(data: string): Promise<string> {
-    // In a real implementation, this would use a barcode library
-    // For this example, we'll create a simple representation
+    // Create a canvas element for the barcode
     const canvas = document.createElement("canvas")
-    canvas.width = 300
-    canvas.height = 80
-    const ctx = canvas.getContext("2d")
 
-    if (!ctx) {
-      throw new Error("Could not get canvas context")
+    try {
+      // Use JsBarcode to generate a Code128 barcode (widely supported format)
+      JsBarcode(canvas, data, {
+        format: "CODE128",
+        displayValue: true,
+        fontSize: 14,
+        textMargin: 2,
+        height: 50,
+        margin: 10,
+        background: "#FFFFFF",
+      })
+
+      // Return the canvas as a data URL
+      return canvas.toDataURL("image/png")
+    } catch (error) {
+      console.error("Error generating barcode:", error)
+
+      // Fallback to a simple text representation if JsBarcode fails
+      const ctx = canvas.getContext("2d")
+      if (!ctx) throw new Error("Could not get canvas context")
+
+      canvas.width = 300
+      canvas.height = 80
+
+      // Draw white background
+      ctx.fillStyle = "#FFFFFF"
+      ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+      // Draw text
+      ctx.font = "16px Arial"
+      ctx.fillStyle = "#000000"
+      ctx.textAlign = "center"
+      ctx.fillText(data, canvas.width / 2, 40)
+
+      return canvas.toDataURL("image/png")
     }
-
-    // Draw a white background
-    ctx.fillStyle = "#FFFFFF"
-    ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-    // Draw barcode bars (simplified representation)
-    ctx.fillStyle = "#000000"
-    const chars = (data || "UNKNOWN").split("")
-    const barWidth = canvas.width / (chars.length * 3)
-
-    chars.forEach((char, i) => {
-      const x = i * barWidth * 3
-      const charCode = char.charCodeAt(0)
-
-      // Use character code to determine bar height
-      const height = 40 + (charCode % 20)
-
-      ctx.fillRect(x, 10, barWidth, height)
-      ctx.fillRect(x + barWidth * 2, 10, barWidth, height)
-    })
-
-    // Add text below barcode
-    ctx.font = "16px Arial"
-    ctx.fillStyle = "#000000"
-    ctx.textAlign = "center"
-    ctx.fillText(data || "UNKNOWN", canvas.width / 2, 70)
-
-    return canvas.toDataURL("image/png")
   }
 
   /**
