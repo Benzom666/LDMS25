@@ -64,13 +64,18 @@ export function LabelGeneratorComponent({ orders, onLabelGenerated }: LabelGener
   const generateSingleLabel = async (order: Order) => {
     setIsGenerating(true)
     try {
+      // Validate required fields
+      if (!order.order_number || !order.customer_name) {
+        throw new Error("Missing required order information")
+      }
+
       const labelData: LabelData = {
         orderNumber: order.order_number,
         customerName: order.customer_name,
         customerPhone: order.customer_phone,
-        deliveryAddress: order.delivery_address,
-        pickupAddress: order.pickup_address,
-        priority: order.priority,
+        deliveryAddress: order.delivery_address || "Address not provided",
+        pickupAddress: order.pickup_address || "Pickup address not provided",
+        priority: order.priority || "normal",
         weight: customWeight || undefined,
         dimensions: customDimensions || undefined,
         specialInstructions: order.delivery_notes || additionalNotes || undefined,
@@ -123,12 +128,12 @@ export function LabelGeneratorComponent({ orders, onLabelGenerated }: LabelGener
       const selectedOrderData = orders.filter((order) => selectedOrders.has(order.id))
 
       const labelDataArray: LabelData[] = selectedOrderData.map((order) => ({
-        orderNumber: order.order_number,
-        customerName: order.customer_name,
+        orderNumber: order.order_number || "UNKNOWN",
+        customerName: order.customer_name || "Unknown Customer",
         customerPhone: order.customer_phone,
-        deliveryAddress: order.delivery_address,
-        pickupAddress: order.pickup_address,
-        priority: order.priority,
+        deliveryAddress: order.delivery_address || "Address not provided",
+        pickupAddress: order.pickup_address || "Pickup address not provided",
+        priority: order.priority || "normal",
         weight: customWeight || undefined,
         dimensions: customDimensions || undefined,
         specialInstructions: order.delivery_notes || additionalNotes || undefined,
@@ -173,13 +178,18 @@ export function LabelGeneratorComponent({ orders, onLabelGenerated }: LabelGener
 
   const printLabel = async (order: Order) => {
     try {
+      // Validate required fields
+      if (!order.order_number || !order.customer_name) {
+        throw new Error("Missing required order information")
+      }
+
       const labelData: LabelData = {
         orderNumber: order.order_number,
         customerName: order.customer_name,
         customerPhone: order.customer_phone,
-        deliveryAddress: order.delivery_address,
-        pickupAddress: order.pickup_address,
-        priority: order.priority,
+        deliveryAddress: order.delivery_address || "Address not provided",
+        pickupAddress: order.pickup_address || "Pickup address not provided",
+        priority: order.priority || "normal",
         weight: customWeight || undefined,
         dimensions: customDimensions || undefined,
         specialInstructions: order.delivery_notes || additionalNotes || undefined,

@@ -45,26 +45,27 @@ export class LabelGenerator {
     // Add order number and priority
     doc.setTextColor(0, 0, 0)
     doc.setFontSize(14)
-    doc.text(`ORDER: ${data.orderNumber}`, 5, 22)
+    doc.text(`ORDER: ${data.orderNumber || "N/A"}`, 5, 22)
 
     // Add priority indicator
-    const priorityColor = data.priority === "urgent" ? "#ff0000" : data.priority === "high" ? "#ff9900" : "#009900"
+    const priority = data.priority || "normal"
+    const priorityColor = priority === "urgent" ? "#ff0000" : priority === "high" ? "#ff9900" : "#009900"
     doc.setFillColor(priorityColor)
     doc.rect(80, 18, 20, 8, "F")
     doc.setTextColor(255, 255, 255)
     doc.setFontSize(8)
-    doc.text(data.priority.toUpperCase(), 90, 23, { align: "center" })
+    doc.text(priority.toUpperCase(), 90, 23, { align: "center" })
 
     // Add barcode
     try {
-      const barcodeDataUrl = await this.generateBarcodeDataUrl(data.orderNumber)
+      const barcodeDataUrl = await this.generateBarcodeDataUrl(data.orderNumber || "UNKNOWN")
       doc.addImage(barcodeDataUrl, "PNG", 15, 28, 75, 20)
     } catch (error) {
       console.error("Failed to generate barcode:", error)
       // Fallback text if barcode generation fails
       doc.setTextColor(0, 0, 0)
       doc.setFontSize(10)
-      doc.text(`Barcode: ${data.orderNumber}`, 52.5, 38, { align: "center" })
+      doc.text(`Barcode: ${data.orderNumber || "N/A"}`, 52.5, 38, { align: "center" })
     }
 
     // Add delivery information
@@ -74,7 +75,7 @@ export class LabelGenerator {
     doc.text("DELIVER TO:", 5, 55)
     doc.setFont("helvetica", "normal")
     doc.setFontSize(9)
-    doc.text(data.customerName, 5, 60)
+    doc.text(data.customerName || "Unknown Customer", 5, 60)
     if (data.customerPhone) {
       doc.text(`Tel: ${data.customerPhone}`, 5, 65)
       doc.text(this.formatAddress(data.deliveryAddress), 5, 70, {
@@ -127,7 +128,7 @@ export class LabelGenerator {
 
     // Add footer
     doc.setFontSize(8)
-    doc.text(`Created: ${data.createdDate}`, 5, 143)
+    doc.text(`Created: ${data.createdDate || new Date().toLocaleDateString()}`, 5, 143)
     if (data.driverName) {
       doc.text(`Driver: ${data.driverName}`, 70, 143)
     }
@@ -220,7 +221,7 @@ export class LabelGenerator {
 
     // Draw barcode bars (simplified representation)
     ctx.fillStyle = "#000000"
-    const chars = data.split("")
+    const chars = (data || "UNKNOWN").split("")
     const barWidth = canvas.width / (chars.length * 3)
 
     chars.forEach((char, i) => {
@@ -238,7 +239,7 @@ export class LabelGenerator {
     ctx.font = "16px Arial"
     ctx.fillStyle = "#000000"
     ctx.textAlign = "center"
-    ctx.fillText(data, canvas.width / 2, 70)
+    ctx.fillText(data || "UNKNOWN", canvas.width / 2, 70)
 
     return canvas.toDataURL("image/png")
   }
@@ -246,7 +247,10 @@ export class LabelGenerator {
   /**
    * Helper method to format address text
    */
-  private static formatAddress(address: string): string {
+  private static formatAddress(address: string | undefined | null): string {
+    if (!address) {
+      return "Address not provided"
+    }
     return address.replace(/,\s*/g, ",\n")
   }
 
