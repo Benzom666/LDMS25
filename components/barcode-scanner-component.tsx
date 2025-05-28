@@ -1,529 +1,512 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/components/ui/use-toast"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { barcodeScanner, type ScanResult } from "@/lib/barcode-scanner"
-import { supabase } from "@/lib/supabase"
 import { useAuth } from "@/contexts/auth-context"
+import { supabase } from "@/lib/supabase"
 import {
   Camera,
   CameraOff,
   Package,
   MapPin,
-  Clock,
+  User,
+  Phone,
   CheckCircle,
   AlertTriangle,
   Scan,
+  Type,
   History,
   Plus,
+  Eye,
+  Settings,
   X,
-  Loader2,
-  RefreshCw,
 } from "lucide-react"
 
-interface ScanHistoryItem {
+interface OrderInfo {
   id: string
   order_number: string
-  scan_type: string
-  scan_timestamp: string
-  location_latitude?: number
-  location_longitude?: number
-  notes?: string
-  customer_name?: string
-  delivery_address?: string
+  customer_name: string
+  customer_phone?: string
+  delivery_address: string
+  status: string
+  priority: string
+  driver_id?: string
+  created_at: string
 }
 
-interface ParcelInfo {
+interface ScanRecord {
+  id: string
+  order_id: string
+  scan_type: string
+  barcode_data: string
+  notes?: string
+  scanned_at: string
+  order?: OrderInfo
+}
+
+interface ScannedParcel {
   id: string
   order_number: string
   customer_name: string
   delivery_address: string
   status: string
   priority: string
-  driver_name?: string
+  driver_id?: string
+  scanned_at: string
 }
 
-export function BarcodeScannerComponent() {
+interface BarcodeScannerComponentProps {
+  onParcelScanned?: (parcel: ScannedParcel) => void
+  onParcelAction?: (parcel: ScannedParcel, action: "add" | "details" | "manage") => void
+  scannedParcels?: ScannedParcel[]
+  onRemoveParcel?: (parcelId: string) => void
+}
+
+export function BarcodeScannerComponent({
+  onParcelScanned,
+  onParcelAction,
+  scannedParcels = [],
+  onRemoveParcel,
+}: BarcodeScannerComponentProps) {
   const { profile } = useAuth()
   const { toast } = useToast()
+  const videoRef = useRef<HTMLVideoElement>(null)
   const [isScanning, setIsScanning] = useState(false)
-  const [scanResult, setScanResult] = useState<ScanResult | null>(null)
-  const [parcelInfo, setParcelInfo] = useState<ParcelInfo | null>(null)
-  const [scanType, setScanType] = useState<string>("pickup")
-  const [notes, setNotes] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [scanHistory, setScanHistory] = useState<ScanHistoryItem[]>([])
-  const [manualOrderNumber, setManualOrderNumber] = useState("")
-  const [cameraPermission, setCameraPermission] = useState<boolean | null>(null)
-  const [availableCameras, setAvailableCameras] = useState<Array<{ id: string; label: string }>>([])
-  const scannerElementRef = useRef<HTMLDivElement>(null)
+  const [cameraEnabled, setCameraEnabled] = useState(false)
+  const [manualEntry, setManualEntry] = useState("")
+  const [orderInfo, setOrderInfo] = useState<OrderInfo | null>(null)
+  const [scanHistory, setScanHistory] = useState<ScanRecord[]>([])
+  const [loading, setLoading] = useState(false)
+  const [scanType, setScanType] = useState<"pickup" | "delivery" | "checkpoint">("delivery")
+  const [stream, setStream] = useState<MediaStream | null>(null)
 
   useEffect(() => {
-    checkCameraPermission()
-    fetchScanHistory()
+    loadScanHistory()
     return () => {
-      stopScanning()
+      cleanup()
     }
   }, [])
 
-  const checkCameraPermission = async () => {
-    const hasPermission = await barcodeScanner.getCameraPermissions()
-    setCameraPermission(hasPermission)
-
-    if (hasPermission) {
-      const cameras = await barcodeScanner.getAvailableCameras()
-      setAvailableCameras(cameras)
+  const cleanup = () => {
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop())
+      setStream(null)
     }
+    setCameraEnabled(false)
+    setIsScanning(false)
   }
 
-  const startScanning = async () => {
-    if (!cameraPermission) {
-      toast({
-        title: "Camera Permission Required",
-        description: "Please allow camera access to scan barcodes.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    try {
-      setIsScanning(true)
-      await barcodeScanner.initializeScanner("barcode-scanner", handleScanSuccess, handleScanError)
-    } catch (error) {
-      console.error("Failed to start scanning:", error)
-      toast({
-        title: "Scanner Error",
-        description: "Failed to start the barcode scanner. Please try again.",
-        variant: "destructive",
-      })
-      setIsScanning(false)
-    }
-  }
-
-  const stopScanning = async () => {
-    try {
-      await barcodeScanner.stopScanning()
-      setIsScanning(false)
-    } catch (error) {
-      console.error("Failed to stop scanning:", error)
-    }
-  }
-
-  const handleScanSuccess = async (result: ScanResult) => {
-    setScanResult(result)
-    await fetchParcelInfo(result.orderNumber)
-
-    toast({
-      title: "Barcode Scanned",
-      description: `Order ${result.orderNumber} detected`,
-    })
-  }
-
-  const handleScanError = (error: string) => {
-    console.warn("Scan error:", error)
-  }
-
-  const fetchParcelInfo = async (orderNumber: string) => {
-    setIsLoading(true)
-    try {
-      const { data: orderData, error: orderError } = await supabase
-        .from("orders")
-        .select(`
-          id,
-          order_number,
-          customer_name,
-          delivery_address,
-          status,
-          priority,
-          driver_id
-        `)
-        .eq("order_number", orderNumber)
-        .single()
-
-      if (orderError) {
-        throw new Error("Order not found")
-      }
-
-      // Get driver name if assigned
-      let driverName = undefined
-      if (orderData.driver_id) {
-        const { data: driverData } = await supabase
-          .from("user_profiles")
-          .select("first_name, last_name")
-          .eq("user_id", orderData.driver_id)
-          .single()
-
-        if (driverData) {
-          driverName = `${driverData.first_name} ${driverData.last_name}`.trim()
-        }
-      }
-
-      setParcelInfo({
-        ...orderData,
-        driver_name: driverName,
-      })
-    } catch (error) {
-      console.error("Error fetching parcel info:", error)
-      toast({
-        title: "Order Not Found",
-        description: `No order found with number: ${orderNumber}`,
-        variant: "destructive",
-      })
-      setParcelInfo(null)
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const handleManualEntry = async () => {
-    if (!manualOrderNumber.trim()) {
-      toast({
-        title: "Order Number Required",
-        description: "Please enter an order number to search.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    const result: ScanResult = {
-      orderNumber: manualOrderNumber.trim(),
-      timestamp: new Date().toISOString(),
-    }
-
-    setScanResult(result)
-    await fetchParcelInfo(result.orderNumber)
-  }
-
-  const recordScan = async () => {
-    if (!scanResult || !parcelInfo || !profile) {
-      toast({
-        title: "Missing Information",
-        description: "Please scan a barcode first.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsLoading(true)
-    try {
-      // Record the scan
-      const { error: scanError } = await supabase.from("parcel_scans").insert({
-        order_id: parcelInfo.id,
-        driver_id: profile.user_id,
-        scan_type: scanType,
-        barcode_data: scanResult.orderNumber,
-        scan_timestamp: scanResult.timestamp,
-        location_lat: scanResult.location?.latitude,
-        location_lng: scanResult.location?.longitude,
-        notes: notes.trim() || null,
-      })
-
-      if (scanError) throw scanError
-
-      // Update order status based on scan type
-      let newStatus = parcelInfo.status
-      if (scanType === "pickup" && parcelInfo.status === "assigned") {
-        newStatus = "picked_up"
-      } else if (scanType === "delivery" && parcelInfo.status === "in_transit") {
-        newStatus = "delivered"
-      }
-
-      if (newStatus !== parcelInfo.status) {
-        const { error: statusError } = await supabase
-          .from("orders")
-          .update({ status: newStatus })
-          .eq("id", parcelInfo.id)
-
-        if (statusError) throw statusError
-      }
-
-      // Record status history
-      const { error: historyError } = await supabase.from("order_status_history").insert({
-        order_id: parcelInfo.id,
-        old_status: parcelInfo.status,
-        new_status: newStatus,
-        changed_by: profile.user_id,
-        scan_id: null, // We don't have the scan ID yet
-        notes: notes.trim() || null,
-        changed_at: scanResult.timestamp,
-      })
-
-      if (historyError) throw historyError
-
-      toast({
-        title: "Scan Recorded",
-        description: `${scanType} scan recorded for order ${scanResult.orderNumber}`,
-      })
-
-      // Reset form
-      setScanResult(null)
-      setParcelInfo(null)
-      setNotes("")
-      setManualOrderNumber("")
-
-      // Refresh scan history
-      await fetchScanHistory()
-    } catch (error) {
-      console.error("Error recording scan:", error)
-      toast({
-        title: "Error",
-        description: "Failed to record scan. Please try again.",
-        variant: "destructive",
-      })
-    } finally {
-      setIsLoading(false)
-    }
-  }
-
-  const fetchScanHistory = async () => {
+  const loadScanHistory = async () => {
     if (!profile) return
 
     try {
       const { data, error } = await supabase
         .from("parcel_scans")
         .select(`
-          id,
-          scan_type,
-          barcode_data,
-          scan_timestamp,
-          location_lat,
-          location_lng,
-          notes,
-          orders!inner(
-            order_number,
-            customer_name,
-            delivery_address
-          )
+          *,
+          order:orders(*)
         `)
         .eq("driver_id", profile.user_id)
-        .order("scan_timestamp", { ascending: false })
+        .order("scanned_at", { ascending: false })
         .limit(10)
 
       if (error) throw error
-
-      const formattedHistory: ScanHistoryItem[] = (data || []).map((scan: any) => ({
-        id: scan.id,
-        order_number: scan.orders.order_number,
-        scan_type: scan.scan_type,
-        scan_timestamp: scan.scan_timestamp,
-        location_latitude: scan.location_lat,
-        location_longitude: scan.location_lng,
-        notes: scan.notes,
-        customer_name: scan.orders.customer_name,
-        delivery_address: scan.orders.delivery_address,
-      }))
-
-      setScanHistory(formattedHistory)
+      setScanHistory(data || [])
     } catch (error) {
-      console.error("Error fetching scan history:", error)
+      console.error("Error loading scan history:", error)
     }
   }
 
-  const getScanTypeBadge = (type: string) => {
-    const config = {
-      pickup: { color: "bg-blue-50 text-blue-700 border-blue-200", icon: Package, label: "Pickup" },
-      delivery: { color: "bg-green-50 text-green-700 border-green-200", icon: CheckCircle, label: "Delivery" },
-      checkpoint: { color: "bg-orange-50 text-orange-700 border-orange-200", icon: MapPin, label: "Checkpoint" },
-      return: { color: "bg-red-50 text-red-700 border-red-200", icon: AlertTriangle, label: "Return" },
-      damage: { color: "bg-red-50 text-red-700 border-red-200", icon: AlertTriangle, label: "Damage" },
+  const initializeCamera = async () => {
+    if (!videoRef.current) return
+
+    try {
+      setLoading(true)
+
+      // Request camera access
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "environment", // Use back camera
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+      })
+
+      setStream(mediaStream)
+      videoRef.current.srcObject = mediaStream
+
+      await new Promise((resolve, reject) => {
+        if (videoRef.current) {
+          videoRef.current.onloadedmetadata = () => {
+            videoRef.current?.play()
+            resolve(true)
+          }
+          videoRef.current.onerror = reject
+        }
+      })
+
+      setCameraEnabled(true)
+      toast({
+        title: "Camera Ready",
+        description: "Camera initialized successfully. You can now start scanning.",
+      })
+    } catch (error) {
+      console.error("Camera initialization failed:", error)
+      toast({
+        title: "Camera Error",
+        description: "Failed to access camera. Please check permissions and try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const startScanning = () => {
+    if (!cameraEnabled) {
+      initializeCamera()
+      return
     }
 
-    const typeConfig = config[type as keyof typeof config] || config.checkpoint
-    const Icon = typeConfig.icon
+    setIsScanning(true)
+    toast({
+      title: "Scanning Started",
+      description: "Point the camera at a barcode to scan.",
+    })
+
+    // Simulate barcode detection (in real implementation, use a barcode library)
+    const scanInterval = setInterval(() => {
+      if (!isScanning) {
+        clearInterval(scanInterval)
+        return
+      }
+
+      // For demo purposes, we'll simulate finding a barcode after a few seconds
+      // In real implementation, this would be handled by a barcode detection library
+    }, 1000)
+  }
+
+  const stopScanning = () => {
+    setIsScanning(false)
+  }
+
+  const processBarcode = async (barcodeData: string) => {
+    setLoading(true)
+    try {
+      // Look up order by barcode/order number
+      const { data: orders, error } = await supabase
+        .from("orders")
+        .select("*")
+        .or(`order_number.eq.${barcodeData},id.eq.${barcodeData}`)
+        .single()
+
+      if (error || !orders) {
+        toast({
+          title: "Order Not Found",
+          description: `No order found for barcode: ${barcodeData}`,
+          variant: "destructive",
+        })
+        return
+      }
+
+      setOrderInfo(orders)
+
+      // Create scanned parcel object
+      const scannedParcel: ScannedParcel = {
+        id: orders.id,
+        order_number: orders.order_number,
+        customer_name: orders.customer_name,
+        delivery_address: orders.delivery_address,
+        status: orders.status,
+        priority: orders.priority,
+        driver_id: orders.driver_id,
+        scanned_at: new Date().toISOString(),
+      }
+
+      // Record the scan
+      await recordScan(orders.id, barcodeData)
+
+      // Notify parent component
+      if (onParcelScanned) {
+        onParcelScanned(scannedParcel)
+      }
+
+      toast({
+        title: "Order Found",
+        description: `Successfully scanned order #${orders.order_number}`,
+      })
+    } catch (error) {
+      console.error("Error processing barcode:", error)
+      toast({
+        title: "Error",
+        description: "Failed to process barcode. Please try again.",
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const recordScan = async (orderId: string, barcodeData: string) => {
+    if (!profile) return
+
+    try {
+      const { error } = await supabase.from("parcel_scans").insert({
+        order_id: orderId,
+        driver_id: profile.user_id,
+        scan_type: scanType,
+        barcode_data: barcodeData,
+        location_lat: null, // Could add geolocation here
+        location_lng: null,
+        notes: `${scanType} scan by driver`,
+      })
+
+      if (error) throw error
+
+      // Update order status based on scan type
+      if (scanType === "pickup") {
+        await supabase.from("orders").update({ status: "picked_up" }).eq("id", orderId)
+      } else if (scanType === "delivery") {
+        await supabase.from("orders").update({ status: "delivered" }).eq("id", orderId)
+      }
+
+      loadScanHistory()
+    } catch (error) {
+      console.error("Error recording scan:", error)
+    }
+  }
+
+  const handleManualEntry = async () => {
+    if (!manualEntry.trim()) {
+      toast({
+        title: "Invalid Input",
+        description: "Please enter an order number.",
+        variant: "destructive",
+      })
+      return
+    }
+
+    await processBarcode(manualEntry.trim())
+    setManualEntry("")
+  }
+
+  const getStatusBadge = (status: string) => {
+    const statusConfig: Record<string, { color: string; icon: any }> = {
+      assigned: { color: "bg-blue-100 text-blue-800", icon: Package },
+      picked_up: { color: "bg-indigo-100 text-indigo-800", icon: Package },
+      in_transit: { color: "bg-purple-100 text-purple-800", icon: Package },
+      delivered: { color: "bg-green-100 text-green-800", icon: CheckCircle },
+      failed: { color: "bg-red-100 text-red-800", icon: AlertTriangle },
+    }
+
+    const config = statusConfig[status] || statusConfig.assigned
+    const Icon = config.icon
 
     return (
-      <Badge variant="outline" className={typeConfig.color}>
+      <Badge className={config.color}>
         <Icon className="mr-1 h-3 w-3" />
-        {typeConfig.label}
+        {status.replace("_", " ")}
       </Badge>
     )
   }
 
+  const getScanTypeBadge = (type: string) => {
+    const typeConfig: Record<string, { color: string; label: string }> = {
+      pickup: { color: "bg-blue-100 text-blue-800", label: "Pickup" },
+      delivery: { color: "bg-green-100 text-green-800", label: "Delivery" },
+      checkpoint: { color: "bg-yellow-100 text-yellow-800", label: "Checkpoint" },
+    }
+
+    const config = typeConfig[type] || typeConfig.delivery
+
+    return <Badge className={config.color}>{config.label}</Badge>
+  }
+
   return (
     <div className="space-y-6">
-      {/* Camera Permission Check */}
-      {cameraPermission === false && (
-        <Card className="border-red-200 bg-red-50">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-2 text-red-800">
-              <AlertTriangle className="h-4 w-4" />
-              <p className="text-sm font-medium">Camera permission is required to scan barcodes.</p>
-              <Button variant="outline" size="sm" onClick={checkCameraPermission}>
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Check Again
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Scanner Controls */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Scan className="h-5 w-5" />
-            Barcode Scanner
-          </CardTitle>
-          <CardDescription>Scan package barcodes or enter order numbers manually</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center gap-4">
-            <Button
-              onClick={isScanning ? stopScanning : startScanning}
-              disabled={cameraPermission === false}
-              className="flex items-center gap-2"
-            >
-              {isScanning ? (
-                <>
-                  <CameraOff className="h-4 w-4" />
-                  Stop Scanner
-                </>
-              ) : (
-                <>
-                  <Camera className="h-4 w-4" />
-                  Start Scanner
-                </>
-              )}
-            </Button>
-
-            <div className="flex items-center gap-2">
-              <Label htmlFor="manual-entry">Or enter manually:</Label>
-              <Input
-                id="manual-entry"
-                placeholder="Order number..."
-                value={manualOrderNumber}
-                onChange={(e) => setManualOrderNumber(e.target.value)}
-                className="w-40"
-              />
-              <Button variant="outline" onClick={handleManualEntry}>
-                Search
-              </Button>
-            </div>
-          </div>
-
-          {/* Scanner Element */}
-          {isScanning && (
-            <div className="border rounded-lg p-4 bg-gray-50">
-              <div id="barcode-scanner" ref={scannerElementRef} className="w-full" />
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Scan Result */}
-      {scanResult && (
+      <div className="grid gap-6 md:grid-cols-2">
+        {/* Scanner Section */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Scanned Order: {scanResult.orderNumber}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setScanResult(null)
-                  setParcelInfo(null)
-                  setNotes("")
-                }}
-              >
-                <X className="h-4 w-4" />
-              </Button>
+            <CardTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5" />
+              Camera Scanner
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            {isLoading ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin" />
-                <span className="ml-2">Loading order information...</span>
-              </div>
-            ) : parcelInfo ? (
-              <div className="space-y-4">
-                {/* Order Information */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Order Details</h4>
-                    <p className="text-sm">
-                      <strong>Customer:</strong> {parcelInfo.customer_name}
-                    </p>
-                    <p className="text-sm">
-                      <strong>Status:</strong> {parcelInfo.status}
-                    </p>
-                    <p className="text-sm">
-                      <strong>Priority:</strong> {parcelInfo.priority}
-                    </p>
-                    {parcelInfo.driver_name && (
-                      <p className="text-sm">
-                        <strong>Driver:</strong> {parcelInfo.driver_name}
-                      </p>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Delivery Address</h4>
-                    <p className="text-sm text-muted-foreground">{parcelInfo.delivery_address}</p>
-                  </div>
-                </div>
-
-                {/* Scan Type Selection */}
-                <div className="space-y-2">
-                  <Label htmlFor="scan-type">Scan Type</Label>
-                  <Select value={scanType} onValueChange={setScanType}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="pickup">Pickup</SelectItem>
-                      <SelectItem value="delivery">Delivery</SelectItem>
-                      <SelectItem value="checkpoint">Checkpoint</SelectItem>
-                      <SelectItem value="return">Return</SelectItem>
-                      <SelectItem value="damage">Damage Report</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                {/* Notes */}
-                <div className="space-y-2">
-                  <Label htmlFor="notes">Notes (Optional)</Label>
-                  <Textarea
-                    id="notes"
-                    placeholder="Add any notes about this scan..."
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    rows={3}
-                  />
-                </div>
-
-                {/* Location Info */}
-                {scanResult.location && (
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <div className="flex items-center gap-2 text-blue-800">
-                      <MapPin className="h-4 w-4" />
-                      <span className="text-sm font-medium">Location captured</span>
-                    </div>
-                    <p className="text-xs text-blue-600 mt-1">
-                      {scanResult.location.latitude.toFixed(6)}, {scanResult.location.longitude.toFixed(6)}
-                    </p>
-                  </div>
-                )}
-
-                {/* Record Button */}
-                <Button onClick={recordScan} disabled={isLoading} className="w-full">
-                  {isLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                  Record {scanType} Scan
+            {/* Scan Type Selection */}
+            <div className="flex gap-2">
+              {["pickup", "delivery", "checkpoint"].map((type) => (
+                <Button
+                  key={type}
+                  variant={scanType === type ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setScanType(type as any)}
+                >
+                  {type.charAt(0).toUpperCase() + type.slice(1)}
                 </Button>
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <AlertTriangle className="mx-auto h-12 w-12 text-red-500 mb-4" />
-                <h3 className="text-lg font-medium mb-2">Order Not Found</h3>
-                <p className="text-muted-foreground">No order found with number: {scanResult.orderNumber}</p>
+              ))}
+            </div>
+
+            {/* Video Element */}
+            <div className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden">
+              <video ref={videoRef} className="w-full h-full object-cover" playsInline muted />
+              {!cameraEnabled && (
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="text-center">
+                    <CameraOff className="mx-auto h-12 w-12 text-gray-400 mb-2" />
+                    <p className="text-sm text-gray-500">Camera not initialized</p>
+                  </div>
+                </div>
+              )}
+              {isScanning && (
+                <div className="absolute inset-0 border-4 border-green-500 animate-pulse">
+                  <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2">
+                    <div className="w-48 h-32 border-2 border-green-500 bg-green-500/10"></div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Scanner Controls */}
+            <div className="flex gap-2">
+              {!isScanning ? (
+                <Button onClick={startScanning} disabled={loading} className="flex-1">
+                  <Scan className="mr-2 h-4 w-4" />
+                  {cameraEnabled ? "Start Scanning" : "Initialize Camera"}
+                </Button>
+              ) : (
+                <Button onClick={stopScanning} variant="destructive" className="flex-1">
+                  <CameraOff className="mr-2 h-4 w-4" />
+                  Stop Scanning
+                </Button>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Manual Entry Section */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Type className="h-5 w-5" />
+              Manual Entry
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Order Number</label>
+              <Input
+                placeholder="Enter order number manually"
+                value={manualEntry}
+                onChange={(e) => setManualEntry(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleManualEntry()}
+              />
+            </div>
+            <Button onClick={handleManualEntry} disabled={loading || !manualEntry.trim()} className="w-full">
+              <Package className="mr-2 h-4 w-4" />
+              Process Order
+            </Button>
+
+            {/* Current Order Info */}
+            {orderInfo && (
+              <div className="mt-6 p-4 bg-green-50 rounded-lg border border-green-200">
+                <h3 className="font-medium text-green-800 mb-2">Current Order</h3>
+                <div className="space-y-2 text-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium">#{orderInfo.order_number}</span>
+                    {getStatusBadge(orderInfo.status)}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 text-gray-500" />
+                    <span>{orderInfo.customer_name}</span>
+                  </div>
+                  {orderInfo.customer_phone && (
+                    <div className="flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-gray-500" />
+                      <span>{orderInfo.customer_phone}</span>
+                    </div>
+                  )}
+                  <div className="flex items-start gap-2">
+                    <MapPin className="h-4 w-4 text-gray-500 mt-0.5" />
+                    <span className="text-xs">{orderInfo.delivery_address}</span>
+                  </div>
+                </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Scanned Parcels Display */}
+      {scannedParcels.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" />
+              Scanned Parcels ({scannedParcels.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-3">
+              {scannedParcels.map((parcel) => (
+                <div key={parcel.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium">#{parcel.order_number}</span>
+                      {getStatusBadge(parcel.status)}
+                    </div>
+                    <p className="text-sm text-gray-600">{parcel.customer_name}</p>
+                    <p className="text-xs text-gray-500">{parcel.delivery_address}</p>
+                    <p className="text-xs text-gray-400">Scanned: {new Date(parcel.scanned_at).toLocaleString()}</p>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    {parcel.driver_id !== profile?.user_id && onParcelAction && (
+                      <Button size="sm" onClick={() => onParcelAction(parcel, "add")} className="text-xs">
+                        <Plus className="mr-1 h-3 w-3" />
+                        Add
+                      </Button>
+                    )}
+                    {onParcelAction && (
+                      <>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onParcelAction(parcel, "details")}
+                          className="text-xs"
+                        >
+                          <Eye className="mr-1 h-3 w-3" />
+                          Details
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => onParcelAction(parcel, "manage")}
+                          className="text-xs"
+                        >
+                          <Settings className="mr-1 h-3 w-3" />
+                          Manage
+                        </Button>
+                      </>
+                    )}
+                    {onRemoveParcel && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => onRemoveParcel(parcel.id)}
+                        className="text-xs text-red-600"
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
           </CardContent>
         </Card>
       )}
@@ -535,40 +518,25 @@ export function BarcodeScannerComponent() {
             <History className="h-5 w-5" />
             Recent Scans
           </CardTitle>
-          <CardDescription>Your recent barcode scan history</CardDescription>
         </CardHeader>
         <CardContent>
           {scanHistory.length === 0 ? (
             <div className="text-center py-8">
-              <Scan className="mx-auto h-12 w-12 text-muted-foreground mb-4" />
-              <h3 className="text-lg font-medium mb-2">No scans yet</h3>
-              <p className="text-muted-foreground">Start scanning barcodes to see your history here.</p>
+              <Scan className="mx-auto h-12 w-12 text-gray-400 mb-2" />
+              <p className="text-gray-500">No scans recorded yet</p>
             </div>
           ) : (
-            <div className="space-y-4">
+            <div className="space-y-3">
               {scanHistory.map((scan) => (
-                <div key={scan.id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">#{scan.order_number}</span>
-                      {getScanTypeBadge(scan.scan_type)}
+                <div key={scan.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center gap-3">
+                    <div className="flex flex-col">
+                      <span className="font-medium">#{scan.barcode_data}</span>
+                      <span className="text-xs text-gray-500">{new Date(scan.scanned_at).toLocaleString()}</span>
                     </div>
-                    <p className="text-sm">{scan.customer_name}</p>
-                    <p className="text-xs text-muted-foreground">{scan.delivery_address.substring(0, 50)}...</p>
-                    {scan.notes && <p className="text-xs text-muted-foreground">Note: {scan.notes}</p>}
+                    {getScanTypeBadge(scan.scan_type)}
                   </div>
-                  <div className="text-right">
-                    <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {new Date(scan.scan_timestamp).toLocaleString()}
-                    </div>
-                    {scan.location_latitude && scan.location_longitude && (
-                      <div className="flex items-center gap-1 text-xs text-muted-foreground mt-1">
-                        <MapPin className="h-3 w-3" />
-                        Location recorded
-                      </div>
-                    )}
-                  </div>
+                  <div className="flex items-center gap-2">{scan.order && getStatusBadge(scan.order.status)}</div>
                 </div>
               ))}
             </div>
@@ -578,3 +546,5 @@ export function BarcodeScannerComponent() {
     </div>
   )
 }
+
+export default BarcodeScannerComponent
