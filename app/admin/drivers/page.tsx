@@ -32,6 +32,7 @@ import {
 import { Badge } from "@/components/ui/badge"
 import { Check, MoreVertical, Send, UserPlus, X, Mail } from "lucide-react"
 import { InvitationSystem } from "@/components/invitation-system"
+import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select"
 
 export default function AdminDriversPage() {
   const { profile } = useAuth()
@@ -46,6 +47,12 @@ export default function AdminDriversPage() {
   const [invitePhone, setInvitePhone] = useState("")
   const [inviteDialogOpen, setInviteDialogOpen] = useState(false)
   const [sendingInvite, setSendingInvite] = useState(false)
+
+  // Placeholder data for drivers
+  const drivers = [
+    { id: 1, name: "John Doe", zone: "North", status: "Active" },
+    { id: 2, name: "Jane Smith", zone: "South", status: "Inactive" },
+  ]
 
   useEffect(() => {
     if (profile) {
@@ -316,6 +323,32 @@ export default function AdminDriversPage() {
           </Dialog>
         </div>
 
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold">Driver List</h2>
+          <div className="flex gap-2">
+            <Select>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Filter by Zone" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Zones</SelectItem>
+                <SelectItem value="north">North</SelectItem>
+                <SelectItem value="south">South</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select>
+              <SelectTrigger className="w-[180px]">
+                <SelectValue placeholder="Filter by Status" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All Statuses</SelectItem>
+                <SelectItem value="active">Active</SelectItem>
+                <SelectItem value="inactive">Inactive</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
         <Tabs defaultValue="active">
           <TabsList>
             <TabsTrigger value="active">Your Drivers ({loading ? "..." : activeDrivers.length})</TabsTrigger>
@@ -467,6 +500,20 @@ export default function AdminDriversPage() {
             <InvitationSystem />
           </TabsContent>
         </Tabs>
+
+        <div className="space-y-4">
+          {drivers.map((driver) => (
+            <Card key={driver.id}>
+              <CardHeader>
+                <CardTitle>Driver: {driver.name}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p>Zone: {driver.zone}</p>
+                <p>Status: {driver.status}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       </div>
     </DashboardLayout>
   )

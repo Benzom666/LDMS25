@@ -12,7 +12,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Badge } from "@/components/ui/badge"
 import { User, Truck, MapPin } from "lucide-react"
-import DriverAvailabilityToggle from "@/components/driver-availability-toggle"
+import { Switch } from "@/components/ui/switch"
 
 export default function DriverProfile() {
   const { profile } = useAuth()
@@ -31,6 +31,7 @@ export default function DriverProfile() {
     vehiclePlate: "",
     vehicleModel: "",
   })
+  const [availability, setAvailability] = useState(true)
 
   useEffect(() => {
     if (profile) {
@@ -310,8 +311,9 @@ export default function DriverProfile() {
               <CardTitle className="text-sm font-medium">Availability</CardTitle>
               <Truck className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
-            <CardContent>
-              <DriverAvailabilityToggle initialStatus={driverDetails?.availability_status || "offline"} />
+            <CardContent className="flex items-center justify-between">
+              <Label htmlFor="availability">Available for Deliveries</Label>
+              <Switch id="availability" checked={availability} onCheckedChange={setAvailability} />
               <p className="text-xs text-muted-foreground mt-1">Toggle to receive new deliveries</p>
             </CardContent>
           </Card>
@@ -440,6 +442,15 @@ export default function DriverProfile() {
             </Card>
           </TabsContent>
         </Tabs>
+        <Card>
+          <CardHeader>
+            <CardTitle>Earnings Summary</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p>Total Earnings: $1,250</p>
+            <p>This Week: $320</p>
+          </CardContent>
+        </Card>
       </div>
     </DashboardLayout>
   )
