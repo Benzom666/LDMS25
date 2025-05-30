@@ -59,7 +59,7 @@ export default function AdminDashboard() {
           .from("user_profiles")
           .select("*", { count: "exact", head: true })
           .eq("role", "driver")
-          .eq("admin_id", profile.id)
+          .eq("admin_id", profile.user_id)
 
         if (driversError) throw driversError
 

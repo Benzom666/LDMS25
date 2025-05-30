@@ -18,7 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
-import { Menu, Home, Package, Users, Settings, LogOut, BarChart3, UserCheck, Mail, User, Scan } from "lucide-react"
+import { Menu, Home, Package, Users, Settings, LogOut, BarChart3, UserCheck, Mail, User } from "lucide-react"
 import { ThemeToggle } from "@/components/theme-toggle"
 
 interface DashboardLayoutProps {
@@ -77,7 +77,6 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       return [
         ...baseItems,
         { name: "Orders", href: "/driver/orders", icon: Package },
-        { name: "Scanner", href: "/driver/scanner", icon: Scan },
         { name: "Invitations", href: "/driver/invitations", icon: Mail },
         { name: "Profile", href: "/driver/profile", icon: User },
       ]

@@ -37,11 +37,6 @@ import {
   Hash,
   Database,
   Globe,
-  Scan,
-  Plus,
-  Eye,
-  Settings,
-  X,
 } from "lucide-react"
 
 interface OrderWithActions extends Order {
@@ -59,17 +54,6 @@ interface RouteState {
   lastOptimizedAt: string | null
 }
 
-interface ScannedParcel {
-  id: string
-  order_number: string
-  customer_name: string
-  delivery_address: string
-  status: string
-  priority: string
-  driver_id?: string
-  scanned_at: string
-}
-
 export default function DriverOrdersPage() {
   const { profile } = useAuth()
   const { toast } = useToast()
@@ -83,12 +67,6 @@ export default function DriverOrdersPage() {
   const [showMap, setShowMap] = useState(false)
   const [isOptimizing, setIsOptimizing] = useState(false)
   const [driverLocation, setDriverLocation] = useState<[number, number] | null>(null)
-
-  // Scanning state
-  const [showScanner, setShowScanner] = useState(false)
-  const [scannedParcels, setScannedParcels] = useState<ScannedParcel[]>([])
-  const [scannerInput, setScannerInput] = useState("")
-  const [isScanning, setIsScanning] = useState(false)
 
   // Enhanced route state management with persistence
   const [routeState, setRouteState] = useState<RouteState>({
@@ -293,150 +271,6 @@ export default function DriverOrdersPage() {
     }
   }, [profile, toast])
 
-  // Barcode scanning functions
-  const handleScanInput = async () => {
-    if (!scannerInput.trim()) {
-      toast({
-        title: "Invalid Input",
-        description: "Please enter a valid order number or barcode.",
-        variant: "destructive",
-      })
-      return
-    }
-
-    setIsScanning(true)
-    try {
-      await processScannedBarcode(scannerInput.trim())
-      setScannerInput("")
-    } finally {
-      setIsScanning(false)
-    }
-  }
-
-  const processScannedBarcode = async (barcode: string) => {
-    try {
-      // Look up order by barcode/order number
-      const { data: order, error } = await supabase
-        .from("orders")
-        .select("*")
-        .or(`order_number.eq.${barcode},id.eq.${barcode}`)
-        .single()
-
-      if (error || !order) {
-        toast({
-          title: "Order Not Found",
-          description: `No order found for barcode: ${barcode}`,
-          variant: "destructive",
-        })
-        return
-      }
-
-      // Check if already scanned
-      const alreadyScanned = scannedParcels.find((p) => p.id === order.id)
-      if (alreadyScanned) {
-        toast({
-          title: "Already Scanned",
-          description: `Order #${order.order_number} has already been scanned.`,
-          variant: "destructive",
-        })
-        return
-      }
-
-      // Add to scanned parcels
-      const scannedParcel: ScannedParcel = {
-        id: order.id,
-        order_number: order.order_number,
-        customer_name: order.customer_name,
-        delivery_address: order.delivery_address,
-        status: order.status,
-        priority: order.priority,
-        driver_id: order.driver_id,
-        scanned_at: new Date().toISOString(),
-      }
-
-      setScannedParcels((prev) => [...prev, scannedParcel])
-
-      toast({
-        title: "Parcel Scanned",
-        description: `Order #${order.order_number} scanned successfully.`,
-      })
-    } catch (error) {
-      console.error("Error processing barcode:", error)
-      toast({
-        title: "Error",
-        description: "Failed to process barcode. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const handleParcelAction = async (parcel: ScannedParcel, action: "add" | "details" | "manage") => {
-    switch (action) {
-      case "add":
-        await assignParcelToDriver(parcel)
-        break
-      case "details":
-        router.push(`/driver/orders/${parcel.id}`)
-        break
-      case "manage":
-        // Open management modal or navigate to management page
-        router.push(`/driver/orders/${parcel.id}/edit`)
-        break
-    }
-  }
-
-  const assignParcelToDriver = async (parcel: ScannedParcel) => {
-    if (!profile) return
-
-    try {
-      // Check if already assigned to this driver
-      if (parcel.driver_id === profile.user_id) {
-        toast({
-          title: "Already Assigned",
-          description: `Order #${parcel.order_number} is already assigned to you.`,
-          variant: "destructive",
-        })
-        return
-      }
-
-      // Assign to driver
-      const { error } = await supabase
-        .from("orders")
-        .update({
-          driver_id: profile.user_id,
-          status: "assigned",
-          assigned_at: new Date().toISOString(),
-        })
-        .eq("id", parcel.id)
-
-      if (error) throw error
-
-      // Update scanned parcel
-      setScannedParcels((prev) =>
-        prev.map((p) => (p.id === parcel.id ? { ...p, driver_id: profile.user_id, status: "assigned" } : p)),
-      )
-
-      // Refresh orders
-      await fetchOrdersAndRoute()
-
-      toast({
-        title: "Parcel Assigned",
-        description: `Order #${parcel.order_number} has been assigned to you.`,
-      })
-    } catch (error) {
-      console.error("Error assigning parcel:", error)
-      toast({
-        title: "Error",
-        description: "Failed to assign parcel. Please try again.",
-        variant: "destructive",
-      })
-    }
-  }
-
-  const removeScannedParcel = (parcelId: string) => {
-    setScannedParcels((prev) => prev.filter((p) => p.id !== parcelId))
-  }
-
   const optimizeDeliveryRoute = async () => {
     // Get all orders, not just filtered ones
     const allOrders = orders.filter((order) => !["delivered", "failed", "cancelled"].includes(order.status))
@@ -512,10 +346,6 @@ export default function DriverOrdersPage() {
         lastOptimizedAt: newRoute.updatedAt,
       }
       setRouteState(newRouteState)
-
-      // Clear scanned parcels after successful optimization
-      setScannedParcels([])
-      setShowScanner(false)
 
       toast({
         title: "Route Optimized",
@@ -854,10 +684,6 @@ export default function DriverOrdersPage() {
                 Location detected
               </div>
             )}
-            <Button onClick={() => setShowScanner(!showScanner)} variant="outline">
-              <Scan className="mr-2 h-4 w-4" />
-              {showScanner ? "Hide Scanner" : "Scan Parcels"}
-            </Button>
             {routeState.isOptimized ? (
               <>
                 <Button onClick={viewOptimizedRoute} variant="outline">
@@ -876,109 +702,13 @@ export default function DriverOrdersPage() {
                 ) : (
                   <>
                     <Shuffle className="mr-2 h-4 w-4" />
-                    Optimize Route
+                    Optimize Route (Nearest First)
                   </>
                 )}
               </Button>
             )}
           </div>
         </div>
-
-        {/* Barcode Scanner Section */}
-        {showScanner && (
-          <Card className="border-blue-200 bg-blue-50">
-            <CardContent className="pt-6">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-lg font-semibold flex items-center gap-2">
-                    <Scan className="h-5 w-5" />
-                    Barcode Scanner
-                  </h3>
-                  <Button variant="ghost" size="sm" onClick={() => setShowScanner(false)}>
-                    <X className="h-4 w-4" />
-                  </Button>
-                </div>
-
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Enter order number or scan barcode..."
-                    value={scannerInput}
-                    onChange={(e) => setScannerInput(e.target.value)}
-                    onKeyPress={(e) => e.key === "Enter" && handleScanInput()}
-                    className="flex-1"
-                  />
-                  <Button onClick={handleScanInput} disabled={isScanning || !scannerInput.trim()}>
-                    {isScanning ? "Processing..." : "Add"}
-                  </Button>
-                </div>
-
-                {/* Scanned Parcels */}
-                {scannedParcels.length > 0 && (
-                  <div className="space-y-2">
-                    <h4 className="font-medium">Scanned Parcels ({scannedParcels.length})</h4>
-                    <div className="space-y-2 max-h-60 overflow-y-auto">
-                      {scannedParcels.map((parcel) => (
-                        <div key={parcel.id} className="flex items-center justify-between p-3 bg-white rounded border">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">#{parcel.order_number}</span>
-                              {getStatusBadge(parcel.status)}
-                              {getPriorityBadge(parcel.priority)}
-                            </div>
-                            <p className="text-sm text-gray-600">{parcel.customer_name}</p>
-                            <p className="text-xs text-gray-500">{parcel.delivery_address}</p>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {parcel.driver_id !== profile.user_id && (
-                              <Button size="sm" onClick={() => handleParcelAction(parcel, "add")} className="text-xs">
-                                <Plus className="mr-1 h-3 w-3" />
-                                Add
-                              </Button>
-                            )}
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleParcelAction(parcel, "details")}
-                              className="text-xs"
-                            >
-                              <Eye className="mr-1 h-3 w-3" />
-                              Details
-                            </Button>
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => handleParcelAction(parcel, "manage")}
-                              className="text-xs"
-                            >
-                              <Settings className="mr-1 h-3 w-3" />
-                              Manage
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => removeScannedParcel(parcel.id)}
-                              className="text-xs text-red-600"
-                            >
-                              <X className="h-3 w-3" />
-                            </Button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-center pt-2 border-t">
-                      <span className="text-sm text-gray-600">
-                        {scannedParcels.filter((p) => p.driver_id === profile.user_id).length} assigned to you
-                      </span>
-                      <Button onClick={optimizeDeliveryRoute} disabled={isOptimizing}>
-                        {isOptimizing ? "Optimizing..." : "Optimize Route"}
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-        )}
 
         {/* Enhanced Optimization Status */}
         {routeState.isOptimized && (
@@ -990,8 +720,8 @@ export default function DriverOrdersPage() {
                   <div>
                     <p className="text-sm font-medium">Route Optimized & Persistent</p>
                     <p className="text-xs text-green-600 mt-1">
-                      {routeState.optimizedOrders.length} orders arranged in optimal sequence with stop numbers. Route
-                      data is synchronized and persisted across sessions.
+                      {routeState.optimizedOrders.length} orders arranged in optimal sequence with accurate coordinates.
+                      Route data is synchronized and persisted across sessions.
                     </p>
                   </div>
                 </div>
@@ -1192,7 +922,7 @@ export default function DriverOrdersPage() {
               <h3 className="text-lg font-medium mb-2">No orders found</h3>
               <p className="text-muted-foreground">
                 {activeTab === "active"
-                  ? "No active orders at the moment. Use the scanner to add parcels or wait for admin assignments."
+                  ? "No active orders at the moment"
                   : activeTab === "completed"
                     ? "No completed deliveries yet"
                     : "No failed orders"}
